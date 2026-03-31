@@ -1,11 +1,37 @@
 """Serial data reader with queue-based communication."""
 
+import os
 import threading
 import time
 import queue
 import math
+from pathlib import Path
 from typing import Optional
 import serial
+
+DEFAULT_DATA_PREFIX = "DataStream:"
+DEFAULT_MAX_DEVICES = 4
+
+
+def _load_env() -> dict:
+    """Load configuration from .env file, falling back to defaults."""
+    config = {}
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.is_file():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            config[key.strip()] = value.strip()
+
+    data_prefix = config.get("DATA_PREFIX", os.environ.get("DATA_PREFIX", DEFAULT_DATA_PREFIX))
+    max_devices = int(config.get("MAX_DEVICES", os.environ.get("MAX_DEVICES", str(DEFAULT_MAX_DEVICES))))
+
+    return {"data_prefix": data_prefix, "max_devices": max_devices}
+
+
+ENV_CONFIG = _load_env()
 
 
 class SerialReader:
@@ -21,6 +47,7 @@ class SerialReader:
         """
         self.data_queue = data_queue
         self.dummy_mode = dummy_mode
+        self.data_prefix = ENV_CONFIG["data_prefix"]
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.serial_port = None
@@ -104,7 +131,7 @@ class SerialReader:
         while self.running:
             # Generate sine wave with some noise
             value = 50 + 30 * math.sin(t * 0.5) + 5 * math.sin(t * 3.2)
-            line = f"data: {value:.2f}\n"
+            line = f"{self.data_prefix} {value:.2f}\n"
 
             # Parse and queue
             parsed = self._parse_line(line)
@@ -162,12 +189,11 @@ class SerialReader:
         """
         line = line.strip()
 
-        # Filter: must start with "data: "
-        if not line.startswith("data: "):
+        prefix_with_space = self.data_prefix + " "
+        if not line.startswith(prefix_with_space):
             return None
 
-        # Extract value after "data: "
-        value_str = line[6:].strip()
+        value_str = line[len(prefix_with_space):].strip()
 
         try:
             return float(value_str)

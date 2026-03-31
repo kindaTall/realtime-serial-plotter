@@ -49,6 +49,9 @@ serial_plotter_recordings/
 # AI assistant documentation
 CLAUDE.md
 
+# Environment
+.env
+
 # OS
 .DS_Store
 Thumbs.db
