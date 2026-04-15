@@ -1,6 +1,7 @@
 """Serial data reader with queue-based communication."""
 
 import os
+import re
 import threading
 import time
 import queue
@@ -11,6 +12,10 @@ import serial
 
 DEFAULT_DATA_PREFIX = "DataStream:"
 DEFAULT_MAX_DEVICES = 4
+
+_BEDSTATE_RE = re.compile(
+    r"^\s*bedstate:\s*(-?\d+)\s+change:\s*(-?\d+)\s*$"
+)
 
 
 def _load_env() -> dict:
@@ -37,15 +42,23 @@ ENV_CONFIG = _load_env()
 class SerialReader:
     """Reads data from serial port (or dummy source) and feeds into queue."""
 
-    def __init__(self, data_queue: queue.Queue, dummy_mode: bool = True):
+    def __init__(
+        self,
+        data_queue: queue.Queue,
+        dummy_mode: bool = True,
+        bridge_queue: Optional[queue.Queue] = None,
+    ):
         """
         Initialize the serial reader.
 
         Args:
             data_queue: Queue to put parsed data into
             dummy_mode: If True, generate dummy data instead of reading serial
+            bridge_queue: Optional queue receiving (bedstate, change) tuples
+                parsed from lines matching `bedstate: <int> change: <int>`.
         """
         self.data_queue = data_queue
+        self.bridge_queue = bridge_queue
         self.dummy_mode = dummy_mode
         self.data_prefix = ENV_CONFIG["data_prefix"]
         self.running = False
@@ -179,15 +192,28 @@ class SerialReader:
         """
         Parse a line of data.
 
-        Format: "data: 123.45\n"
+        Data format: "<DATA_PREFIX> 123.45\n"
+        Bridge format: "bedstate: <int> change: <int>\n"
+
+        Bridge lines are side-effected into self.bridge_queue (if set) and
+        return None so they don't enter the float plot path.
 
         Args:
             line: Raw line from serial port
 
         Returns:
-            Parsed float value or None if parse fails
+            Parsed float value or None if not a data line.
         """
         line = line.strip()
+
+        if self.bridge_queue is not None:
+            m = _BEDSTATE_RE.match(line)
+            if m is not None:
+                try:
+                    self.bridge_queue.put_nowait((int(m.group(1)), int(m.group(2))))
+                except queue.Full:
+                    pass
+                return None
 
         prefix_with_space = self.data_prefix + " "
         if not line.startswith(prefix_with_space):

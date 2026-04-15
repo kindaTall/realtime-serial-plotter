@@ -57,6 +57,15 @@ class DeviceTab(QWidget):
         # Port scanning
         self.current_ports = []
 
+        # Bridge (forwards parsed bedstate lines to a second ESP)
+        self.bridge_queue = queue.Queue(maxsize=100)
+        self.bridge_driver = None
+        self._bridge_module = None
+        self.bridge_combo = QComboBox()
+        self.bridge_combo.setFixedWidth(180)
+        self.bridge_combo.addItem("(none)", None)
+        self.bridge_combo.currentIndexChanged.connect(self._on_bridge_changed)
+
         # Plot curve
         self.plot_curve = plot_widget.plot(
             pen=pg.mkPen(color=color, width=1), name=label
@@ -83,6 +92,11 @@ class DeviceTab(QWidget):
         self.open_button.clicked.connect(self.on_open_clicked)
         layout.addWidget(self.open_button)
 
+        # Bridge target selector
+        bridge_label = QLabel("Bridge \u2192")
+        layout.addWidget(bridge_label)
+        layout.addWidget(self.bridge_combo)
+
         layout.addStretch()
 
         # Recording controls
@@ -102,7 +116,7 @@ class DeviceTab(QWidget):
         layout.addWidget(self.open_folder_button)
 
     def populate_ports(self):
-        """Populate the COM port dropdown, disabling ports claimed by other tabs."""
+        """Populate the source and bridge COM port dropdowns, disabling claimed ports."""
         ports = serial.tools.list_ports.comports()
         self.current_ports = [port.device for port in ports]
         claimed = self._get_claimed_ports(exclude=self)
@@ -128,6 +142,34 @@ class DeviceTab(QWidget):
 
         self.port_combo.blockSignals(False)
 
+        self._populate_bridge_combo(ports, claimed, current_port)
+
+    def _populate_bridge_combo(self, ports, claimed, source_port):
+        """Populate the bridge dropdown. Excludes this tab's own source port
+        and any port already claimed for source/bridge by other tabs."""
+        current_bridge = self.bridge_combo.currentData()
+
+        self.bridge_combo.blockSignals(True)
+        self.bridge_combo.clear()
+        self.bridge_combo.addItem("(none)", None)
+
+        model = self.bridge_combo.model()
+        for port in ports:
+            disabled = port.device in claimed or port.device == source_port
+            self.bridge_combo.addItem(
+                f"{port.device} - {port.description}", port.device
+            )
+            if disabled:
+                item = model.item(self.bridge_combo.count() - 1)
+                item.setEnabled(False)
+
+        if current_bridge:
+            index = self.bridge_combo.findData(current_bridge)
+            if index >= 0:
+                self.bridge_combo.setCurrentIndex(index)
+
+        self.bridge_combo.blockSignals(False)
+
     def scan_ports(self):
         """Rescan ports if the list changed."""
         ports = serial.tools.list_ports.comports()
@@ -144,7 +186,11 @@ class DeviceTab(QWidget):
             else:
                 print(f"[{self.label}] Connecting to {port}...")
 
-            self.serial_reader = SerialReader(self.data_queue, dummy_mode=dummy_mode)
+            self.serial_reader = SerialReader(
+                self.data_queue,
+                dummy_mode=dummy_mode,
+                bridge_queue=self.bridge_queue,
+            )
             self.serial_reader.start(port=port, baud=115200)
             self.is_connected = True
             self.open_button.setText("Close")
@@ -200,8 +246,60 @@ class DeviceTab(QWidget):
         except Exception as e:
             print(f"Failed to open folder: {e}")
 
+    def _on_bridge_changed(self):
+        port = self.bridge_combo.currentData()
+        self._close_bridge()
+        if not port:
+            return
+        try:
+            if self._bridge_module is None:
+                from serial_plotter._sm_driver_import import load_driver
+                self._bridge_module = load_driver()
+            driver = self._bridge_module.SMBedStateDriver(port)
+            driver.open()
+            self.bridge_driver = driver
+            print(f"[{self.label}] bridging to {port}")
+            if self._on_connection_changed:
+                self._on_connection_changed()
+        except Exception as e:
+            print(f"[{self.label}] bridge open failed: {e}", file=sys.stderr)
+            self.bridge_driver = None
+            self.bridge_combo.blockSignals(True)
+            self.bridge_combo.setCurrentIndex(0)
+            self.bridge_combo.blockSignals(False)
+
+    def _close_bridge(self):
+        if self.bridge_driver is None:
+            return
+        try:
+            self.bridge_driver.close()
+        except Exception as e:
+            print(f"[{self.label}] bridge close error: {e}", file=sys.stderr)
+        self.bridge_driver = None
+
+    def _dispatch_bridge_events(self):
+        if self.bridge_driver is None or self._bridge_module is None:
+            return
+        BedOccupancy = self._bridge_module.BedOccupancy
+        ExitActivity = self._bridge_module.ExitActivity
+        try:
+            while True:
+                bedstate, change = self.bridge_queue.get_nowait()
+                try:
+                    self.bridge_driver.set_occupancy(BedOccupancy(bedstate))
+                except ValueError:
+                    print(f"[{self.label}] bad bedstate int: {bedstate}", file=sys.stderr)
+                try:
+                    self.bridge_driver.set_exit_activity(ExitActivity(change))
+                except ValueError:
+                    print(f"[{self.label}] bad change int: {change}", file=sys.stderr)
+        except queue.Empty:
+            pass
+        except Exception as e:
+            print(f"[{self.label}] bridge dispatch error: {e}", file=sys.stderr)
+
     def update(self):
-        """Drain queue and update plot curve."""
+        """Drain queues, update plot curve, and forward bridge events."""
         new_data = []
         try:
             while True:
@@ -217,11 +315,14 @@ class DeviceTab(QWidget):
         values = np.array(self.data_buffer)
         self.plot_curve.setData(TIME_AXIS, values, connect="finite")
 
+        self._dispatch_bridge_events()
+
     def cleanup(self):
-        """Stop reader and remove curve from plot."""
+        """Stop reader, close bridge, and remove curve from plot."""
         if self.serial_reader:
             self.serial_reader.stop()
             self.serial_reader = None
+        self._close_bridge()
         self.plot_widget.removeItem(self.plot_curve)
 
 
@@ -299,7 +400,7 @@ class SerialPlotterGUI(QMainWindow):
         self._add_plus_tab()
 
     def _get_claimed_ports(self, exclude=None) -> set:
-        """Return set of port devices that are connected on other tabs."""
+        """Return set of port devices already used as source or bridge on other tabs."""
         claimed = set()
         for tab in self.device_tabs:
             if tab is exclude:
@@ -308,6 +409,10 @@ class SerialPlotterGUI(QMainWindow):
                 port = tab.port_combo.currentData()
                 if port:
                     claimed.add(port)
+            if tab.bridge_driver is not None:
+                bridge_port = tab.bridge_combo.currentData()
+                if bridge_port:
+                    claimed.add(bridge_port)
         return claimed
 
     def _next_color(self) -> str:
