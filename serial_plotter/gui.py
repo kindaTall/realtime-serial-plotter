@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTabBar,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QEvent, QTimer
 import pyqtgraph as pg
 import serial.tools.list_ports
 import numpy as np
@@ -228,12 +228,20 @@ class DeviceTab(QWidget):
 class SerialPlotterGUI(QMainWindow):
     """Main window for the Serial Plotter application."""
 
-    def __init__(self):
+    def __init__(self, presentation_config=None):
         super().__init__()
         self.max_devices = ENV_CONFIG["max_devices"]
         self.device_tabs: list[DeviceTab] = []
         self.next_device_num = 1
         self.available_colors = list(DEVICE_COLORS)
+        self._presentation_config = presentation_config
+        self.presentation = None
+        self._presentation_controls = None
+        self._app_event_filter_installed = False
+        self._controls_hide_timer = QTimer(self)
+        self._controls_hide_timer.setSingleShot(True)
+        self._controls_hide_timer.timeout.connect(self._hide_controls)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._init_ui()
 
@@ -271,7 +279,20 @@ class SerialPlotterGUI(QMainWindow):
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.setTitle("Serial Data")
         self.plot_widget.addLegend()
-        main_layout.addWidget(self.plot_widget)
+
+        if self._presentation_config is not None:
+            from serial_plotter.presentation import PresentationController
+            self.presentation = PresentationController(
+                self._presentation_config, self.plot_widget
+            )
+            main_layout.addWidget(self.presentation.stack())
+            self._presentation_controls = self.presentation.build_controls(
+                self._toggle_fullscreen
+            )
+            main_layout.addWidget(self._presentation_controls)
+            self.presentation.start()
+        else:
+            main_layout.addWidget(self.plot_widget)
 
         # Add first device tab and the "+" tab
         self._add_device_tab()
@@ -368,19 +389,95 @@ class SerialPlotterGUI(QMainWindow):
         for tab in self.device_tabs:
             tab.scan_ports()
 
+    def _toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+        self.activateWindow()
+        self.setFocus()
+
+    def _apply_chrome_visibility(self):
+        """In presentation mode, hide tab bar + controls when fullscreen."""
+        if self.presentation is None:
+            return
+        fullscreen = self.isFullScreen()
+        self.tab_widget.setVisible(not fullscreen)
+        if self._presentation_controls is not None:
+            if fullscreen:
+                # Start hidden; mouse-near-bottom will reveal.
+                self._presentation_controls.setVisible(False)
+                self._controls_hide_timer.stop()
+                if not self._app_event_filter_installed:
+                    app = QApplication.instance()
+                    if app is not None:
+                        app.installEventFilter(self)
+                        self._app_event_filter_installed = True
+            else:
+                self._presentation_controls.setVisible(True)
+                self._controls_hide_timer.stop()
+                if self._app_event_filter_installed:
+                    app = QApplication.instance()
+                    if app is not None:
+                        app.removeEventFilter(self)
+                    self._app_event_filter_installed = False
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._apply_chrome_visibility()
+        super().changeEvent(event)
+
+    def eventFilter(self, obj, event):
+        if (
+            self.isFullScreen()
+            and self._presentation_controls is not None
+            and event.type() == QEvent.Type.MouseMove
+        ):
+            pos = self.mapFromGlobal(event.globalPosition().toPoint())
+            threshold = self.height() - 80
+            if 0 <= pos.x() <= self.width() and pos.y() >= threshold:
+                self._presentation_controls.setVisible(True)
+                self._controls_hide_timer.start(2000)
+            elif self._presentation_controls.isVisible():
+                self._controls_hide_timer.start(2000)
+        return super().eventFilter(obj, event)
+
+    def _hide_controls(self):
+        if self.isFullScreen() and self._presentation_controls is not None:
+            self._presentation_controls.setVisible(False)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (Qt.Key.Key_F11, Qt.Key.Key_F):
+            self._toggle_fullscreen()
+            return
+        if key == Qt.Key.Key_Escape:
+            if self.isFullScreen():
+                self.showNormal()
+                return
+            if self.presentation and self.presentation.is_active():
+                self.presentation.stop()
+                return
+        if self.presentation and self.presentation.is_active():
+            if self.presentation.handle_key(event):
+                return
+        super().keyPressEvent(event)
+
     def closeEvent(self, event):
         print("Shutting down...")
         self.plot_timer.stop()
         self.port_scan_timer.stop()
+        if self.presentation:
+            self.presentation.cleanup()
         for tab in self.device_tabs:
             tab.cleanup()
         event.accept()
 
 
-def main():
+def main(presentation_config=None):
     """Main entry point for the GUI application."""
     app = QApplication(sys.argv)
-    window = SerialPlotterGUI()
+    window = SerialPlotterGUI(presentation_config=presentation_config)
     window.show()
     sys.exit(app.exec())
 

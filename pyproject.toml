@@ -27,7 +27,7 @@ classifiers = [
 
 dependencies = [
     "pyserial>=3.5",
-    "PyQt6>=6.4.0",
+    "PyQt6>=6.5.0",
     "pyqtgraph>=0.13.0",
     "numpy>=1.20.0",
 ]

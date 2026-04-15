@@ -46,6 +46,13 @@ htmlcov/
 # Application data
 serial_plotter_recordings/
 
+# Presentation-mode media (binaries — config JSON is tracked)
+demo_media/*.jpg
+demo_media/*.jpeg
+demo_media/*.png
+demo_media/*.mp4
+demo_media/*.mov
+
 # AI assistant documentation
 CLAUDE.md
 
