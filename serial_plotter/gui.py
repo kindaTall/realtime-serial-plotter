@@ -396,13 +396,15 @@ class SerialPlotterGUI(QMainWindow):
         # Plot widget (shared)
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground("w")
-        self.plot_widget.setLabel("left", "Value")
-        self.plot_widget.setLabel("bottom", "Time", units="s")
+        self.plot_widget.setLabel("left", "Signal")
+        self.plot_widget.setLabel("bottom", "Zeit", units="s")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.setTitle("Serial Data")
         self.plot_widget.addLegend()
 
         if self._presentation_config is not None:
+            self.plot_widget.getAxis("left").setStyle(showValues=False)
+
             from serial_plotter.presentation import PresentationController
             self.presentation = PresentationController(
                 self._presentation_config, self.plot_widget
