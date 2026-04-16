@@ -278,17 +278,11 @@ class DeviceTab(QWidget):
         self.bridge_driver = None
 
     def _dispatch_bridge_events(self):
-        if self.bridge_driver is None or self._bridge_module is None:
+        if self.bridge_driver is None:
             return
-        m = self._bridge_module
         try:
             while True:
-                line = self.bridge_queue.get_nowait()
-                try:
-                    state = m.parse_bed_state(line)
-                except m.SMBedStateProtocolError as e:
-                    print(f"[{self.label}] malformed BedState: {e}", file=sys.stderr)
-                    continue
+                state = self.bridge_queue.get_nowait()
                 try:
                     self.bridge_driver.set_bed_state(state)
                 except Exception as e:

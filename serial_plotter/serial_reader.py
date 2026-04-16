@@ -9,9 +9,15 @@ from pathlib import Path
 from typing import Optional
 import serial
 
-DEFAULT_DATA_PREFIX = "DataStream:"
+from sm_bedstate_driver import (
+    BedStateMsg,
+    DataMsg,
+    DEFAULT_BEDSTATE_PREFIX,
+    DEFAULT_DATA_PREFIX,
+    SMStreamParser,
+)
+
 DEFAULT_MAX_DEVICES = 4
-BEDSTATE_PREFIX = "BedState:"
 
 
 def _load_env() -> dict:
@@ -26,10 +32,22 @@ def _load_env() -> dict:
             key, _, value = line.partition("=")
             config[key.strip()] = value.strip()
 
-    data_prefix = config.get("DATA_PREFIX", os.environ.get("DATA_PREFIX", DEFAULT_DATA_PREFIX))
-    max_devices = int(config.get("MAX_DEVICES", os.environ.get("MAX_DEVICES", str(DEFAULT_MAX_DEVICES))))
+    data_prefix = config.get(
+        "DATA_PREFIX", os.environ.get("DATA_PREFIX", DEFAULT_DATA_PREFIX)
+    )
+    bedstate_prefix = config.get(
+        "BEDSTATE_PREFIX",
+        os.environ.get("BEDSTATE_PREFIX", DEFAULT_BEDSTATE_PREFIX),
+    )
+    max_devices = int(
+        config.get("MAX_DEVICES", os.environ.get("MAX_DEVICES", str(DEFAULT_MAX_DEVICES)))
+    )
 
-    return {"data_prefix": data_prefix, "max_devices": max_devices}
+    return {
+        "data_prefix": data_prefix,
+        "bedstate_prefix": bedstate_prefix,
+        "max_devices": max_devices,
+    }
 
 
 ENV_CONFIG = _load_env()
@@ -48,15 +66,19 @@ class SerialReader:
         Initialize the serial reader.
 
         Args:
-            data_queue: Queue to put parsed data into
-            dummy_mode: If True, generate dummy data instead of reading serial
-            bridge_queue: Optional queue receiving (bedstate, change) tuples
-                parsed from lines matching `bedstate: <int> change: <int>`.
+            data_queue: Queue to put parsed floats into.
+            dummy_mode: If True, generate dummy data instead of reading serial.
+            bridge_queue: Optional queue receiving parsed BedState objects
+                from lines matching the configured bedstate prefix.
         """
         self.data_queue = data_queue
         self.bridge_queue = bridge_queue
         self.dummy_mode = dummy_mode
         self.data_prefix = ENV_CONFIG["data_prefix"]
+        self._parser = SMStreamParser(
+            data_prefix=self.data_prefix,
+            bedstate_prefix=ENV_CONFIG["bedstate_prefix"],
+        )
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.serial_port = None
@@ -186,37 +208,18 @@ class SerialReader:
 
     def _parse_line(self, line: str) -> Optional[float]:
         """
-        Parse a line of data.
+        Parse a line. Data lines return a float; bedstate lines are pushed
+        as typed BedState objects into self.bridge_queue (if set) and
+        return None so they don't enter the plot path.
 
-        Data format: "<DATA_PREFIX> 123.45\n"
-        Bridge format: "BedState: <12 whitespace-separated fields>\n"
-
-        Bridge lines are pushed as raw strings into self.bridge_queue (if
-        set); the GUI side hands them to sm_bedstate_driver.parse_bed_state.
-        Bridge lines always return None so they don't enter the plot path.
-
-        Args:
-            line: Raw line from serial port
-
-        Returns:
-            Parsed float value or None if not a data line.
+        Line classification is delegated to sm_bedstate_driver.SMStreamParser.
         """
-        line = line.strip()
-
-        if self.bridge_queue is not None and line.startswith(BEDSTATE_PREFIX):
+        msg = self._parser.parse(line)
+        if isinstance(msg, DataMsg):
+            return msg.value
+        if isinstance(msg, BedStateMsg) and self.bridge_queue is not None:
             try:
-                self.bridge_queue.put_nowait(line)
+                self.bridge_queue.put_nowait(msg.value)
             except queue.Full:
                 pass
-            return None
-
-        prefix_with_space = self.data_prefix + " "
-        if not line.startswith(prefix_with_space):
-            return None
-
-        value_str = line[len(prefix_with_space):].strip()
-
-        try:
-            return float(value_str)
-        except ValueError:
-            return None
+        return None
