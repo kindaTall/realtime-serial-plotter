@@ -18,6 +18,7 @@ from sm_bedstate_driver import (
 )
 
 DEFAULT_MAX_DEVICES = 4
+SAMPLE_RATE_HZ = 1395 / 4  # 348.75 Hz; firmware oversamples by 4 internally
 
 
 def _load_env() -> dict:
@@ -178,8 +179,8 @@ class SerialReader:
                     # Queue full, skip this data point
                     pass
 
-            t += 1/350
-            time.sleep(1/350)  # 350 Hz to simulate real data rate
+            t += 1 / SAMPLE_RATE_HZ
+            time.sleep(1 / SAMPLE_RATE_HZ)
 
     def _serial_read_loop(self):
         """Read from actual serial port."""

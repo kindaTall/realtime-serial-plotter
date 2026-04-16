@@ -24,11 +24,12 @@ from PyQt6.QtCore import Qt, QEvent, QTimer
 import pyqtgraph as pg
 import serial.tools.list_ports
 import numpy as np
-from serial_plotter.serial_reader import SerialReader, ENV_CONFIG
+from serial_plotter.serial_reader import SerialReader, ENV_CONFIG, SAMPLE_RATE_HZ
 
 DEVICE_COLORS = ['b', 'r', 'g', '#FF8C00']
-BUFFER_SIZE = 5250  # 15s at 350Hz
-TIME_AXIS = np.linspace(0, BUFFER_SIZE / 350, BUFFER_SIZE)  # fixed x-axis
+WINDOW_SECONDS = 15
+BUFFER_SIZE = int(SAMPLE_RATE_HZ * WINDOW_SECONDS)
+TIME_AXIS = np.linspace(0, WINDOW_SECONDS, BUFFER_SIZE)  # fixed x-axis
 
 
 class DeviceTab(QWidget):
