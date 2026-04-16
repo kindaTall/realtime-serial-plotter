@@ -280,19 +280,19 @@ class DeviceTab(QWidget):
     def _dispatch_bridge_events(self):
         if self.bridge_driver is None or self._bridge_module is None:
             return
-        BedOccupancy = self._bridge_module.BedOccupancy
-        ExitActivity = self._bridge_module.ExitActivity
+        m = self._bridge_module
         try:
             while True:
-                bedstate, change = self.bridge_queue.get_nowait()
+                line = self.bridge_queue.get_nowait()
                 try:
-                    self.bridge_driver.set_occupancy(BedOccupancy(bedstate))
-                except ValueError:
-                    print(f"[{self.label}] bad bedstate int: {bedstate}", file=sys.stderr)
+                    state = m.parse_bed_state(line)
+                except m.SMBedStateProtocolError as e:
+                    print(f"[{self.label}] malformed BedState: {e}", file=sys.stderr)
+                    continue
                 try:
-                    self.bridge_driver.set_exit_activity(ExitActivity(change))
-                except ValueError:
-                    print(f"[{self.label}] bad change int: {change}", file=sys.stderr)
+                    self.bridge_driver.set_bed_state(state)
+                except Exception as e:
+                    print(f"[{self.label}] set_bed_state failed: {e}", file=sys.stderr)
         except queue.Empty:
             pass
         except Exception as e:

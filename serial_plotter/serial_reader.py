@@ -1,7 +1,6 @@
 """Serial data reader with queue-based communication."""
 
 import os
-import re
 import threading
 import time
 import queue
@@ -12,10 +11,7 @@ import serial
 
 DEFAULT_DATA_PREFIX = "DataStream:"
 DEFAULT_MAX_DEVICES = 4
-
-_BEDSTATE_RE = re.compile(
-    r"^\s*bedstate:\s*(-?\d+)\s+change:\s*(-?\d+)\s*$"
-)
+BEDSTATE_PREFIX = "BedState:"
 
 
 def _load_env() -> dict:
@@ -193,10 +189,11 @@ class SerialReader:
         Parse a line of data.
 
         Data format: "<DATA_PREFIX> 123.45\n"
-        Bridge format: "bedstate: <int> change: <int>\n"
+        Bridge format: "BedState: <12 whitespace-separated fields>\n"
 
-        Bridge lines are side-effected into self.bridge_queue (if set) and
-        return None so they don't enter the float plot path.
+        Bridge lines are pushed as raw strings into self.bridge_queue (if
+        set); the GUI side hands them to sm_bedstate_driver.parse_bed_state.
+        Bridge lines always return None so they don't enter the plot path.
 
         Args:
             line: Raw line from serial port
@@ -206,14 +203,12 @@ class SerialReader:
         """
         line = line.strip()
 
-        if self.bridge_queue is not None:
-            m = _BEDSTATE_RE.match(line)
-            if m is not None:
-                try:
-                    self.bridge_queue.put_nowait((int(m.group(1)), int(m.group(2))))
-                except queue.Full:
-                    pass
-                return None
+        if self.bridge_queue is not None and line.startswith(BEDSTATE_PREFIX):
+            try:
+                self.bridge_queue.put_nowait(line)
+            except queue.Full:
+                pass
+            return None
 
         prefix_with_space = self.data_prefix + " "
         if not line.startswith(prefix_with_space):
