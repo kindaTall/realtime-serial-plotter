@@ -85,6 +85,7 @@ class DeviceTab(QWidget):
 
         self.port_combo = QComboBox()
         self.populate_ports()
+        self.port_combo.currentIndexChanged.connect(self._on_source_port_changed)
         layout.addWidget(self.port_combo)
 
         # Open button
@@ -122,6 +123,11 @@ class DeviceTab(QWidget):
         self.current_ports = [port.device for port in ports]
         claimed = self._get_claimed_ports(exclude=self)
 
+        own_bridge = self.bridge_combo.currentData()
+        source_disabled = set(claimed)
+        if own_bridge:
+            source_disabled.add(own_bridge)
+
         current_port = self.port_combo.currentData()
 
         self.port_combo.blockSignals(True)
@@ -131,7 +137,7 @@ class DeviceTab(QWidget):
             model = self.port_combo.model()
             for i, port in enumerate(ports):
                 self.port_combo.addItem(f"{port.device} - {port.description}", port.device)
-                if port.device in claimed:
+                if port.device in source_disabled:
                     item = model.item(i)
                     item.setEnabled(False)
             if current_port:
@@ -247,27 +253,31 @@ class DeviceTab(QWidget):
         except Exception as e:
             print(f"Failed to open folder: {e}")
 
+    def _on_source_port_changed(self):
+        """Source selection changed — refresh combos so own bridge/source
+        exclusion is reflected immediately."""
+        self.populate_ports()
+
     def _on_bridge_changed(self):
         port = self.bridge_combo.currentData()
         self._close_bridge()
-        if not port:
-            return
-        try:
-            if self._bridge_module is None:
-                from serial_plotter._sm_driver_import import load_driver
-                self._bridge_module = load_driver()
-            driver = self._bridge_module.SMBedStateDriver(port)
-            driver.open()
-            self.bridge_driver = driver
-            print(f"[{self.label}] bridging to {port}")
-            if self._on_connection_changed:
-                self._on_connection_changed()
-        except Exception as e:
-            print(f"[{self.label}] bridge open failed: {e}", file=sys.stderr)
-            self.bridge_driver = None
-            self.bridge_combo.blockSignals(True)
-            self.bridge_combo.setCurrentIndex(0)
-            self.bridge_combo.blockSignals(False)
+        if port:
+            try:
+                if self._bridge_module is None:
+                    from serial_plotter._sm_driver_import import load_driver
+                    self._bridge_module = load_driver()
+                driver = self._bridge_module.SMBedStateDriver(port)
+                driver.open()
+                self.bridge_driver = driver
+                print(f"[{self.label}] bridging to {port}")
+            except Exception as e:
+                print(f"[{self.label}] bridge open failed: {e}", file=sys.stderr)
+                self.bridge_driver = None
+                self.bridge_combo.blockSignals(True)
+                self.bridge_combo.setCurrentIndex(0)
+                self.bridge_combo.blockSignals(False)
+        if self._on_connection_changed:
+            self._on_connection_changed()
 
     def _close_bridge(self):
         if self.bridge_driver is None:
