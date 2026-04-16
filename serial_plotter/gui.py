@@ -61,6 +61,7 @@ class DeviceTab(QWidget):
         self.bridge_queue = queue.Queue(maxsize=100)
         self.bridge_driver = None
         self._bridge_module = None
+        self._last_bedstate_key = None
         self.bridge_combo = QComboBox()
         self.bridge_combo.setFixedWidth(180)
         self.bridge_combo.addItem("(none)", None)
@@ -276,13 +277,28 @@ class DeviceTab(QWidget):
         except Exception as e:
             print(f"[{self.label}] bridge close error: {e}", file=sys.stderr)
         self.bridge_driver = None
+        self._last_bedstate_key = None
 
     def _dispatch_bridge_events(self):
         if self.bridge_driver is None:
             return
+        target = self.bridge_combo.currentData()
         try:
             while True:
                 state = self.bridge_queue.get_nowait()
+                key = (
+                    state.occupancy.state,
+                    state.activity.state,
+                    state.switch_.state,
+                    state.exit_activity.state,
+                )
+                if key != self._last_bedstate_key:
+                    self._last_bedstate_key = key
+                    print(
+                        f"[{self.label}] BedState \u2192 {target}: "
+                        f"occ={key[0].name} act={key[1].name} "
+                        f"sw={key[2].name} ex={key[3].name}"
+                    )
                 try:
                     self.bridge_driver.set_bed_state(state)
                 except Exception as e:
