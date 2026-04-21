@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sm-bedstate-driver"
+version = "0.2.0"
+description = "PC-side driver for the sm_bedstate_usb_driven SM test build"
+requires-python = ">=3.8"
+dependencies = ["pyserial>=3.5"]
+
+[tool.setuptools]
+py-modules = ["sm_bedstate_driver"]
