@@ -42,6 +42,9 @@ dev = [
 [project.scripts]
 serial-plotter = "serial_plotter.cli:main"
 
+[tool.setuptools.packages.find]
+include = ["serial_plotter*"]
+
 [project.urls]
 Homepage = "https://github.com/yourusername/python_serial_plotter"
 Repository = "https://github.com/yourusername/python_serial_plotter"
