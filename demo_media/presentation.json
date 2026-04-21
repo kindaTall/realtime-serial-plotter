@@ -1,11 +1,8 @@
 {
-  "default_duration_ms": 5000,
+  "default_duration_ms": 10000,
   "slides": [
-    {"type": "plot",  "duration_ms": 8000},
-    {"type": "image", "path": "slide1.jpg", "duration_ms": 4000},
-    {"type": "video", "path": "demo.mp4",   "duration_ms": 6000, "loop": true},
-    {"type": "image", "path": "slide2.jpg", "duration_ms": 4000},
-    {"type": "plot",  "duration_ms": 8000},
-    {"type": "image", "path": "slide3.jpg", "duration_ms": 4000}
+    {"type": "plot",  "duration_ms": 10000},
+    {"type": "image", "path": "screenshot.png",        "duration_ms": 10000},
+    {"type": "image", "path": "screenshot-mobile.png", "duration_ms": 10000}
   ]
 }
