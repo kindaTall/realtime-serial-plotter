@@ -144,13 +144,15 @@ class _ImageSlideWidget(QWidget):
         target = self._label.size()
         if target.width() <= 0 or target.height() <= 0:
             return
-        self._label.setPixmap(
-            self._pixmap.scaled(
-                target,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+        dpr = self.devicePixelRatioF() or 1.0
+        scaled = self._pixmap.scaled(
+            int(target.width() * dpr),
+            int(target.height() * dpr),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
         )
+        scaled.setDevicePixelRatio(dpr)
+        self._label.setPixmap(scaled)
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt API)
         super().resizeEvent(event)
